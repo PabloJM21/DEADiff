@@ -27,6 +27,15 @@ From University of Science and Technology of China and ByteDance.
 <p>Stylized text-to-image results. Resolution: 512 x 512. (Compressed)</p>
 </div>
 
+### ⭐⭐ Style Transfer.
+
+<div align="center">
+<img src=docs/showcase_controlnet.png>
+<p>Style transfer results with 
+  <a href="https://github.com/lllyasviel/ControlNet.git" target="_blank">ControlNet</a>.
+</p>
+</div>
+
 
 ## 📝 Changelog
 - __[2024.4.3]__: 🔥🔥 Release the inference code and pretrained checkpoint.
@@ -66,6 +75,26 @@ Prompt: "A robot"
 
 Prompt: "A motorcycle"
 ![p](https://github.com/Tianhao-Qi/DEADiff_code_private/assets/37017794/f23f8c4f-b72e-463c-9855-9767941e4932)
+
+### ➕ Style Transfer with ControlNet
+
+We support **style transfer with structural control** by combining DEADiff with [ControlNet](https://github.com/lllyasviel/ControlNet). This enables users to guide the spatial layout (e.g., edges or depth maps) of the generated images, while transferring the visual style from a reference image.
+
+To perform style transfer with ControlNet, please download the following pretrained models:
+- `control_sd15_canny.pth`: [Download](https://huggingface.co/lllyasviel/ControlNet/resolve/main/models/control_sd15_canny.pth) → place it under `./pretrained/`
+- `control_sd15_depth.pth`: [Download](https://huggingface.co/lllyasviel/ControlNet/resolve/main/models/control_sd15_depth.pth) → place it under `./pretrained/`
+- `dpt_hybrid-midas-501f0c75.pt` (for depth estimation): [Download](https://huggingface.co/lllyasviel/ControlNet/resolve/main/annotator/ckpts/dpt_hybrid-midas-501f0c75.pt) → place it under `ldm/controlnet/annotator/ckpts/`
+These checkpoints are required for Canny and Depth-based ControlNet stylization modes.
+Then run the following commands in terminal.
+```python3
+# Canny-based control
+python3 scripts/app_canny_control.py
+```
+
+```python3
+# Depth-based control
+python3 scripts/app_depth_control.py
+```
 
 ## 📢 Disclaimer
 We develop this repository for RESEARCH purposes, so it can only be used for personal/research/non-commercial purposes.
