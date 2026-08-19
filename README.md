@@ -50,9 +50,10 @@ From University of Science and Technology of China and ByteDance.
 ## ⚙️ Setup
 
 ```bash
-conda create -n deadiff python=3.9.2
-conda activate deadiff
-conda install pytorch==2.0.0 torchvision==0.15.0 torchaudio==2.0.0 pytorch-cuda=11.8 -c pytorch -c nvidia
+python3.10 -m venv deadiff
+source deadiff/bin/activate
+pip install --upgrade pip
+pip install torch==2.0.0+cu118 torchvision==0.15.0+cu118 torchaudio==2.0.0+cu118 --index-url https://download.pytorch.org/whl/cu118
 pip install git+https://github.com/salesforce/LAVIS.git@20230801-blip-diffusion-edit
 pip install -r requirements.txt
 pip install -e .
