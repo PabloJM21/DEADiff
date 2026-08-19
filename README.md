@@ -50,35 +50,13 @@ From University of Science and Technology of China and ByteDance.
 ## ⚙️ Setup
 
 ```bash
-#Create Python 3.9 venv
-python3.9 -m venv deadiff
+python3.10 -m venv deadiff
 source deadiff/bin/activate
 pip install --upgrade pip
-#Install PyTorch stack
 pip install torch==2.0.0+cu118 torchvision==0.15.0+cu118 torchaudio==2.0.0+cu118 --index-url https://download.pytorch.org/whl/cu118
-#Install LAVIS dependency pins
-pip uninstall -y gradio fastapi starlette pydantic pydantic-core
-pip install pydantic==1.10.12
-pip install fairscale==0.4.4 timm==0.4.12 opencv-python-headless==4.5.5.64
-#Install spaCy + thin
-pip install spacy==3.5.3 thinc==8.1.10
-#Install LAVIS BLIP‑Diffusion
 pip install git+https://github.com/salesforce/LAVIS.git@20230801-blip-diffusion-edit
-#Fix albumentations build
-pip install --upgrade pip setuptools wheel
-pip install setuptools==65.5.0
-pip install --no-build-isolation albumentations==0.4.3
-
 pip install -r requirements.txt
 pip install -e .
-
-pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python
-pip install opencv-python-headless==4.5.5.64
-
-pip uninstall -y huggingface_hub
-pip install huggingface_hub==0.14.1
-
-
 ```
 
 ## 💫 Inference
