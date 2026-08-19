@@ -92,6 +92,21 @@ Then run the following commands in terminal.
 python3 scripts/app_canny_control.py
 ```
 
+For non-interactive cluster jobs (no UI), use the batch CLI:
+```bash
+python3 scripts/batch_canny_control.py \
+  --style_image /path/to/style.jpg \
+  --content_image /path/to/content.jpg \
+  --canny_map /path/to/canny_map.png \
+  --prompt "best quality, extremely detailed, a futuristic city" \
+  --output_dir outputs/canny_batch_run \
+  --batch_size 1 \
+  --ddim_steps 40 \
+  --save_canny_map
+```
+This command saves generated images to `--output_dir` and exits, which makes it suitable for schedulers such as Slurm.
+If `--canny_map` is provided, that map is used as the structural control signal instead of auto-extracting edges from `--content_image`.
+
 ```python3
 # Depth-based control
 python3 scripts/app_depth_control.py
