@@ -121,13 +121,59 @@ python3 scripts/batch_canny_control.py \
   --content_image /path/to/content.jpg \
   --canny_map /path/to/canny_map.png \
   --prompt "best quality, extremely detailed, a futuristic city" \
+  --negative_prompt "low quality, blurry, distorted" \
   --output_dir outputs/canny_batch_run \
   --batch_size 1 \
+  --sampler ddim \
   --ddim_steps 40 \
+  --scale 8.0 \
+  --img_weight 1.0 \
+  --canny_low_threshold 100 \
+  --canny_high_threshold 200 \
+  --control_resolution 384 \
+  --style_image_size 224 \
+  --precision autocast \
   --save_canny_map
 ```
 This command saves generated images to `--output_dir` and exits, which makes it suitable for schedulers such as Slurm.
 If `--canny_map` is provided, that map is used as the structural control signal instead of auto-extracting edges from `--content_image`.
+
+Preset examples:
+
+```bash
+# Prompt-priority (stronger prompt adherence)
+python3 scripts/batch_canny_control.py \
+  --style_image /path/to/style.jpg \
+  --content_image /path/to/content.jpg \
+  --prompt "A snowy landscape" \
+  --scale 10 \
+  --img_weight 0.8 \
+  --output_dir outputs/prompt_priority
+```
+
+```bash
+# Style-priority (stronger transfer from reference image)
+python3 scripts/batch_canny_control.py \
+  --style_image /path/to/style.jpg \
+  --content_image /path/to/content.jpg \
+  --prompt "A snowy landscape" \
+  --scale 7 \
+  --img_weight 1.3 \
+  --output_dir outputs/style_priority
+```
+
+```bash
+# Runway-preserve (structure-first with custom boundary/marking map)
+python3 scripts/batch_canny_control.py \
+  --style_image /path/to/style.jpg \
+  --content_image /path/to/content.jpg \
+  --canny_map /path/to/runway_map.png \
+  --subject_text "content" \
+  --scale 8 \
+  --img_weight 0.6 \
+  --output_dir outputs/runway_preserve \
+  --save_canny_map
+```
 
 ```python3
 # Depth-based control

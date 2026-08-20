@@ -121,6 +121,12 @@ class DEADiffCannyBatch(object):
         scale,
         img_weight,
         seed,
+        negative_prompt,
+        canny_low_threshold,
+        canny_high_threshold,
+        control_resolution,
+        style_image_size,
+        precision,
     ):
         accelerator = accelerate.Accelerator()
         device = accelerator.device
@@ -132,17 +138,16 @@ class DEADiffCannyBatch(object):
         n_rows = 1 if batch_size < 2 else (2 if batch_size < 5 else 3)
         prompts = batch_size * [prompt]
 
-        precision_scope = autocast
+        precision_scope = autocast if precision == "autocast" else torch.cuda.amp.autocast
+        precision_enabled = precision == "autocast"
         with torch.no_grad():
-            with precision_scope("cuda"):
+            with precision_scope("cuda", enabled=precision_enabled):
                 with self.model.ema_scope():
                     if scale != 1.0:
                         uc_encoder_hidden_states = self.model.get_learned_conditioning(
                             {
                                 "target_text": batch_size
-                                * [
-                                    "over-exposure, under-exposure, saturated, duplicate, out of frame, lowres, cropped, worst quality, low quality, jpeg artifacts, morbid, mutilated, out of frame, ugly, bad anatomy, bad proportions, deformed, blurry, duplicate"
-                                ],
+                                * [negative_prompt],
                                 "subject_text": subject_text,
                             }
                         )
@@ -154,7 +159,7 @@ class DEADiffCannyBatch(object):
                     if subject_text == "None":
                         subject_text = None
 
-                    img = resize_image(HWC3(image_content_input), 384)
+                    img = resize_image(HWC3(image_content_input), control_resolution)
                     h, w, _ = img.shape
 
                     if image_canny_map_input is not None:
@@ -165,7 +170,7 @@ class DEADiffCannyBatch(object):
                         )
                         detected_map = HWC3(boundary_map)
                     else:
-                        detected_map = apply_canny(img, 100, 200)
+                        detected_map = apply_canny(img, canny_low_threshold, canny_high_threshold)
                         detected_map = HWC3(detected_map)
                     canny_map = Image.fromarray(detected_map)
 
@@ -178,7 +183,7 @@ class DEADiffCannyBatch(object):
                             "target_text": prompts,
                             "inp_image": 2
                             * (
-                                T.ToTensor()(Image.fromarray(image_style_input).convert("RGB").resize((224, 224)))
+                                T.ToTensor()(Image.fromarray(image_style_input).convert("RGB").resize((style_image_size, style_image_size)))
                                 - 0.5
                             )
                             .unsqueeze(0)
@@ -261,6 +266,23 @@ def parse_args():
     parser.add_argument("--ddim_steps", type=int, default=50)
     parser.add_argument("--scale", type=float, default=8.0)
     parser.add_argument("--img_weight", type=float, default=1.0)
+    parser.add_argument(
+        "--negative_prompt",
+        type=str,
+        default="over-exposure, under-exposure, saturated, duplicate, out of frame, lowres, cropped, worst quality, low quality, jpeg artifacts, morbid, mutilated, out of frame, ugly, bad anatomy, bad proportions, deformed, blurry, duplicate",
+        help="Negative prompt used for unconditional guidance",
+    )
+    parser.add_argument("--canny_low_threshold", type=int, default=100)
+    parser.add_argument("--canny_high_threshold", type=int, default=200)
+    parser.add_argument("--control_resolution", type=int, default=384)
+    parser.add_argument("--style_image_size", type=int, default=224)
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="autocast",
+        choices=["autocast", "full"],
+        help="Inference precision mode",
+    )
     parser.add_argument("--seed", type=int, default=-1)
     parser.add_argument("--config", type=str, default="configs/inference_deadiff_control_512x512.yaml")
     parser.add_argument("--ckpt", type=str, default="pretrained/deadiff_v1.ckpt")
@@ -299,6 +321,12 @@ def main():
         scale=args.scale,
         img_weight=args.img_weight,
         seed=args.seed,
+        negative_prompt=args.negative_prompt,
+        canny_low_threshold=args.canny_low_threshold,
+        canny_high_threshold=args.canny_high_threshold,
+        control_resolution=args.control_resolution,
+        style_image_size=args.style_image_size,
+        precision=args.precision,
     )
 
     for i, image in enumerate(samples):
@@ -321,6 +349,12 @@ def main():
         f.write(f"ddim_steps={args.ddim_steps}\n")
         f.write(f"scale={args.scale}\n")
         f.write(f"img_weight={args.img_weight}\n")
+        f.write(f"negative_prompt={args.negative_prompt}\n")
+        f.write(f"canny_low_threshold={args.canny_low_threshold}\n")
+        f.write(f"canny_high_threshold={args.canny_high_threshold}\n")
+        f.write(f"control_resolution={args.control_resolution}\n")
+        f.write(f"style_image_size={args.style_image_size}\n")
+        f.write(f"precision={args.precision}\n")
 
     print(f"Saved results to: {output_dir}")
 
