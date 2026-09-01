@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import argparse
+import os
 from pathlib import Path
 
 import accelerate
+import cv2
 import k_diffusion as K
 import numpy as np
 import torch
@@ -35,6 +37,61 @@ from ldm.util import instantiate_from_config
 
 
 apply_canny = CannyDetector()
+
+
+def load_gt_points_from_txt(img_path, w, h):
+    txt_path = os.path.splitext(img_path)[0] + ".txt"
+
+    if not os.path.exists(txt_path):
+        return None
+
+    with open(txt_path, "r", encoding="utf-8") as f:
+        line = f.readline().strip()
+
+    if not line:
+        return None
+
+    values = line.split()
+    if len(values) < 13:
+        return None
+
+    coords = list(map(float, values[-8:]))
+
+    x_tl, y_tl, x_bl, y_bl, x_tr, y_tr, x_br, y_br = coords
+
+    gt_pts = np.array(
+        [
+            [x_tl * w, y_tl * h],
+            [x_tr * w, y_tr * h],
+            [x_br * w, y_br * h],
+            [x_bl * w, y_bl * h],
+        ],
+        dtype=np.int32,
+    ).reshape(-1, 1, 2)
+
+    return gt_pts
+
+
+def load_gt_mask(img_path):
+    img = cv2.imread(img_path)
+    if img is None:
+        raise ValueError(f"Could not read image: {img_path}")
+
+    h, w = img.shape[:2]
+    gt_mask = None
+
+    gt_pts = load_gt_points_from_txt(img_path, w, h)
+    if gt_pts is not None:
+        gt_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(gt_mask, [gt_pts], 255)
+
+    if gt_mask is None:
+        raise ValueError(f"Could not read GT mask: {img_path}")
+
+    if gt_mask.ndim == 3:
+        gt_mask = gt_mask[..., 0]
+
+    return (gt_mask > 0).astype(np.float32)
 
 
 def load_model_from_config(config, ckpt, verbose=False):
@@ -126,6 +183,8 @@ class DEADiffCannyBatch(object):
         control_resolution,
         style_image_size,
         precision,
+        image_content_input_path,
+        use_gt_mask,
     ):
         accelerator = accelerate.Accelerator()
         device = accelerator.device
@@ -230,6 +289,17 @@ class DEADiffCannyBatch(object):
                     x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
                     x_samples_ddim = accelerator.gather(x_samples_ddim)
 
+                    if use_gt_mask:
+                        gt_mask = torch.from_numpy(load_gt_mask(image_content_input_path)).float().to(
+                            x_samples_ddim.device
+                        )
+                        gt_mask = gt_mask.unsqueeze(0).unsqueeze(0)
+                        gt_mask = gt_mask.repeat(x_samples_ddim.shape[0], 1, 1, 1)
+                        original = torch.from_numpy(img).float().to(x_samples_ddim.device) / 255.0
+                        original = rearrange(original, "h w c -> 1 c h w")
+                        original = original.repeat(x_samples_ddim.shape[0], 1, 1, 1)
+                        x_samples_ddim = x_samples_ddim * (1.0 - gt_mask) + original * gt_mask
+
                     if accelerator.is_main_process:
                         all_samples = [
                             T.ToPILImage()(x_sample_ddim) for x_sample_ddim in x_samples_ddim
@@ -294,6 +364,11 @@ def parse_args():
     parser.add_argument("--control_ckpt", type=str, default="pretrained/control_sd15_canny.pth")
     parser.add_argument("--output_dir", type=str, default="outputs/canny_batch")
     parser.add_argument(
+        "--use_gt_mask",
+        action="store_true",
+        help="Enable runway preservation using the sibling .txt polygon mask for each content image.",
+    )
+    parser.add_argument(
         "--save_canny_map",
         action="store_true",
         help="Kept for compatibility; output mode only writes final renamed grid images",
@@ -341,6 +416,7 @@ def main():
             prompt=args.prompt,
             image_style_input=style_image,
             image_content_input=content_image,
+            image_content_input_path=str(content_path),
             image_canny_map_input=canny_map_image,
             subject_text=args.subject_text,
             batch_size=args.batch_size,
@@ -355,6 +431,7 @@ def main():
             control_resolution=args.control_resolution,
             style_image_size=args.style_image_size,
             precision=args.precision,
+            use_gt_mask=args.use_gt_mask,
         )
 
         if grid_image is None:
