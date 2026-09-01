@@ -94,6 +94,26 @@ def load_gt_mask(img_path):
     return (gt_mask > 0).astype(np.float32)
 
 
+def resolve_canny_map_path(canny_dir, content_path):
+    if canny_dir is None:
+        return None
+
+    canny_dir = Path(canny_dir)
+    if not canny_dir.is_dir():
+        raise ValueError(f"canny_dir does not exist or is not a directory: {canny_dir}")
+
+    direct_match = canny_dir / content_path.name
+    if direct_match.is_file():
+        return direct_match
+
+    stem_matches = sorted(canny_dir.glob(f"{content_path.stem}.*"))
+    for candidate in stem_matches:
+        if candidate.is_file():
+            return candidate
+
+    return None
+
+
 def load_model_from_config(config, ckpt, verbose=False):
     print(f"Loading model from {ckpt}")
     pl_sd = torch.load(ckpt, map_location="cpu")
@@ -349,6 +369,12 @@ def parse_args():
         help="Optional path to a precomputed boundary/canny map to use as control",
     )
     parser.add_argument(
+        "--canny_dir",
+        type=str,
+        default=None,
+        help="Optional directory containing canny maps matched by content filename; falls back to auto edges when missing",
+    )
+    parser.add_argument(
         "--subject_text",
         type=str,
         default="style",
@@ -427,16 +453,27 @@ def main():
     if args.canny_map:
         canny_map_image = np.array(Image.open(args.canny_map).convert("RGB"))
 
+    canny_dir = args.canny_dir
+    if canny_dir is not None:
+        canny_dir = Path(canny_dir)
+        if not canny_dir.is_dir():
+            raise ValueError(f"canny_dir does not exist or is not a directory: {canny_dir}")
+
     pipeline = DEADiffCannyBatch(args.config, args.ckpt, args.control_ckpt)
 
     for content_path in matching_files:
         content_image = np.array(Image.open(content_path).convert("RGB"))
+        image_canny_map_image = canny_map_image
+        if image_canny_map_image is None and canny_dir is not None:
+            canny_map_path = resolve_canny_map_path(canny_dir, content_path)
+            if canny_map_path is not None:
+                image_canny_map_image = np.array(Image.open(canny_map_path).convert("RGB"))
         _, grid_image, _, _ = pipeline.generate(
             prompt=args.prompt,
             image_style_input=style_image,
             image_content_input=content_image,
             image_content_input_path=str(content_path),
-            image_canny_map_input=canny_map_image,
+            image_canny_map_input=image_canny_map_image,
             subject_text=args.subject_text,
             batch_size=args.batch_size,
             sampler_name=args.sampler,
