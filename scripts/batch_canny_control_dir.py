@@ -290,9 +290,16 @@ class DEADiffCannyBatch(object):
                     x_samples_ddim = accelerator.gather(x_samples_ddim)
 
                     if use_gt_mask:
-                        gt_mask = torch.from_numpy(load_gt_mask(image_content_input_path)).float().to(
-                            x_samples_ddim.device
-                        )
+                        gt_mask = load_gt_mask(image_content_input_path)
+                        target_width = x_samples_ddim.shape[-1]
+                        target_height = x_samples_ddim.shape[-2]
+                        if gt_mask.shape != (target_height, target_width):
+                            gt_mask = cv2.resize(
+                                gt_mask,
+                                (target_width, target_height),
+                                interpolation=cv2.INTER_NEAREST,
+                            )
+                        gt_mask = torch.from_numpy(gt_mask).float().to(x_samples_ddim.device)
                         gt_mask = gt_mask.unsqueeze(0).unsqueeze(0)
                         gt_mask = gt_mask.repeat(x_samples_ddim.shape[0], 1, 1, 1)
                         original = torch.from_numpy(img).float().to(x_samples_ddim.device) / 255.0
