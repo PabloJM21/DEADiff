@@ -254,7 +254,31 @@ class DEADiffCannyBatch(object):
                     cond = {"c_concat": [control], "c_crossattn": c}
                     un_cond = {"c_concat": [control], "c_crossattn": [uc, uc]}
 
-                    shape = [4, h // 8, w // 8]
+                    content_tensor = (
+                        T.ToTensor()(Image.fromarray(img).convert("RGB"))
+                        .unsqueeze(0)
+                        .to("cuda")
+                    )
+                    content_tensor = content_tensor * 2.0 - 1.0
+                    x0 = self.model.get_first_stage_encoding(
+                        self.model.encode_first_stage(content_tensor)
+                    )
+
+                    shape = list(x0.shape[1:])
+                    mask = None
+                    if use_gt_mask:
+                        gt_mask = load_gt_mask(image_content_input_path)
+                        latent_height, latent_width = shape[-2], shape[-1]
+                        if gt_mask.shape != (latent_height, latent_width):
+                            gt_mask = cv2.resize(
+                                gt_mask,
+                                (latent_width, latent_height),
+                                interpolation=cv2.INTER_NEAREST,
+                            )
+                        mask = torch.from_numpy(gt_mask).float().to(x0.device)
+                        mask = mask.unsqueeze(0).unsqueeze(0)
+                        mask = mask.repeat(batch_size, 1, 1, 1)
+                        x0 = x0.repeat(batch_size, 1, 1, 1)
 
                     if sampler_name == "ddim":
                         sampler = DDIMSampler(self.model)
@@ -267,8 +291,14 @@ class DEADiffCannyBatch(object):
                             unconditional_guidance_scale=scale,
                             unconditional_conditioning=un_cond,
                             img_weight=img_weight,
+                            mask=mask,
+                            x0=x0 if use_gt_mask else None,
                         )
                     else:
+                        if use_gt_mask:
+                            raise NotImplementedError(
+                                "--use_gt_mask requires --sampler ddim in the true inpainting path"
+                            )
                         sigmas = self.model_wrap.get_sigmas(ddim_steps)
                         x = torch.randn([batch_size, *shape], device=device) * sigmas[0]
                         extra_args = {
@@ -288,24 +318,6 @@ class DEADiffCannyBatch(object):
                     x_samples_ddim = self.model.decode_first_stage(samples_ddim)
                     x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
                     x_samples_ddim = accelerator.gather(x_samples_ddim)
-
-                    if use_gt_mask:
-                        gt_mask = load_gt_mask(image_content_input_path)
-                        target_width = x_samples_ddim.shape[-1]
-                        target_height = x_samples_ddim.shape[-2]
-                        if gt_mask.shape != (target_height, target_width):
-                            gt_mask = cv2.resize(
-                                gt_mask,
-                                (target_width, target_height),
-                                interpolation=cv2.INTER_NEAREST,
-                            )
-                        gt_mask = torch.from_numpy(gt_mask).float().to(x_samples_ddim.device)
-                        gt_mask = gt_mask.unsqueeze(0).unsqueeze(0)
-                        gt_mask = gt_mask.repeat(x_samples_ddim.shape[0], 1, 1, 1)
-                        original = torch.from_numpy(img).float().to(x_samples_ddim.device) / 255.0
-                        original = rearrange(original, "h w c -> 1 c h w")
-                        original = original.repeat(x_samples_ddim.shape[0], 1, 1, 1)
-                        x_samples_ddim = x_samples_ddim * (1.0 - gt_mask) + original * gt_mask
 
                     if accelerator.is_main_process:
                         all_samples = [
