@@ -205,6 +205,7 @@ class DEADiffCannyBatch(object):
         precision,
         image_content_input_path,
         use_gt_mask,
+        mask_preserve_strength,
     ):
         accelerator = accelerate.Accelerator()
         device = accelerator.device
@@ -240,6 +241,24 @@ class DEADiffCannyBatch(object):
                     img = resize_image(HWC3(image_content_input), control_resolution)
                     h, w, _ = img.shape
 
+                    gt_mask = None
+                    if use_gt_mask:
+                        gt_mask = load_gt_mask(image_content_input_path)
+                        if gt_mask.shape != (h, w):
+                            gt_mask = cv2.resize(
+                                gt_mask,
+                                (w, h),
+                                interpolation=cv2.INTER_NEAREST,
+                            )
+                        source_coverage = float(gt_mask.mean())
+                        effective_preserve_coverage = float((gt_mask * mask_preserve_strength).mean())
+                        print(
+                            f"[mask] {Path(image_content_input_path).name}: "
+                            f"image_coverage={source_coverage:.4f}, "
+                            f"strength={mask_preserve_strength:.3f}, "
+                            f"effective_preserve_coverage={effective_preserve_coverage:.4f}"
+                        )
+
                     if image_canny_map_input is not None:
                         boundary_map = HWC3(image_canny_map_input)
                         # Keep boundary alignment with the resized content image.
@@ -250,6 +269,11 @@ class DEADiffCannyBatch(object):
                     else:
                         detected_map = apply_canny(img, canny_low_threshold, canny_high_threshold)
                         detected_map = HWC3(detected_map)
+
+                    if gt_mask is not None:
+                        # Do not condition on runway markings; runway is composited back after stylization.
+                        detected_map[gt_mask > 0] = 0
+
                     canny_map = Image.fromarray(detected_map)
 
                     control = torch.from_numpy(detected_map.copy()).float().cuda() / 255.0
@@ -274,31 +298,7 @@ class DEADiffCannyBatch(object):
                     cond = {"c_concat": [control], "c_crossattn": c}
                     un_cond = {"c_concat": [control], "c_crossattn": [uc, uc]}
 
-                    content_tensor = (
-                        T.ToTensor()(Image.fromarray(img).convert("RGB"))
-                        .unsqueeze(0)
-                        .to("cuda")
-                    )
-                    content_tensor = content_tensor * 2.0 - 1.0
-                    x0 = self.model.get_first_stage_encoding(
-                        self.model.encode_first_stage(content_tensor)
-                    )
-
-                    shape = list(x0.shape[1:])
-                    mask = None
-                    if use_gt_mask:
-                        gt_mask = load_gt_mask(image_content_input_path)
-                        latent_height, latent_width = shape[-2], shape[-1]
-                        if gt_mask.shape != (latent_height, latent_width):
-                            gt_mask = cv2.resize(
-                                gt_mask,
-                                (latent_width, latent_height),
-                                interpolation=cv2.INTER_NEAREST,
-                            )
-                        mask = torch.from_numpy(gt_mask).float().to(x0.device)
-                        mask = mask.unsqueeze(0).unsqueeze(0)
-                        mask = mask.repeat(batch_size, 1, 1, 1)
-                        x0 = x0.repeat(batch_size, 1, 1, 1)
+                    shape = [4, h // 8, w // 8]
 
                     if sampler_name == "ddim":
                         sampler = DDIMSampler(self.model)
@@ -311,14 +311,8 @@ class DEADiffCannyBatch(object):
                             unconditional_guidance_scale=scale,
                             unconditional_conditioning=un_cond,
                             img_weight=img_weight,
-                            mask=mask,
-                            x0=x0 if use_gt_mask else None,
                         )
                     else:
-                        if use_gt_mask:
-                            raise NotImplementedError(
-                                "--use_gt_mask requires --sampler ddim in the true inpainting path"
-                            )
                         sigmas = self.model_wrap.get_sigmas(ddim_steps)
                         x = torch.randn([batch_size, *shape], device=device) * sigmas[0]
                         extra_args = {
@@ -337,6 +331,17 @@ class DEADiffCannyBatch(object):
 
                     x_samples_ddim = self.model.decode_first_stage(samples_ddim)
                     x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
+
+                    if gt_mask is not None:
+                        gt_mask_tensor = torch.from_numpy(gt_mask).float().to(x_samples_ddim.device)
+                        gt_mask_tensor = gt_mask_tensor.unsqueeze(0).unsqueeze(0)
+                        gt_mask_tensor = gt_mask_tensor.repeat(batch_size, 1, 1, 1)
+                        original = torch.from_numpy(img).float().to(x_samples_ddim.device) / 255.0
+                        original = rearrange(original, "h w c -> 1 c h w")
+                        original = original.repeat(batch_size, 1, 1, 1)
+                        alpha = gt_mask_tensor * mask_preserve_strength
+                        x_samples_ddim = x_samples_ddim * (1.0 - alpha) + original * alpha
+
                     x_samples_ddim = accelerator.gather(x_samples_ddim)
 
                     if accelerator.is_main_process:
@@ -414,6 +419,12 @@ def parse_args():
         help="Enable runway preservation using the sibling .txt polygon mask for each content image.",
     )
     parser.add_argument(
+        "--mask_preserve_strength",
+        type=float,
+        default=1.0,
+        help="Preservation strength in [0,1] for GT mask in DDIM inpainting mode. 1.0 keeps the strongest constraint.",
+    )
+    parser.add_argument(
         "--save_canny_map",
         action="store_true",
         help="Kept for compatibility; output mode only writes final renamed grid images",
@@ -430,8 +441,14 @@ def normalize_extension(ext):
     return ext
 
 
+def check_unit_interval(name, value):
+    if value < 0.0 or value > 1.0:
+        raise ValueError(f"{name} must be in [0, 1], got: {value}")
+
+
 def main():
     args = parse_args()
+    check_unit_interval("--mask_preserve_strength", args.mask_preserve_strength)
 
     content_dir = Path(args.content_dir)
     if not content_dir.is_dir():
@@ -488,6 +505,7 @@ def main():
             style_image_size=args.style_image_size,
             precision=args.precision,
             use_gt_mask=args.use_gt_mask,
+            mask_preserve_strength=args.mask_preserve_strength,
         )
 
         if grid_image is None:
