@@ -35,6 +35,11 @@ from ldm.controlnet.annotator.util import HWC3, resize_image
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.util import instantiate_from_config
 
+DEFAULT_NEGATIVE_PROMPT = """over-exposure, under-exposure, saturated, lowres, cropped, worst quality, low quality,
+jpeg artifacts, ugly, deformed, blurry,
+hallucinated details, artificial edges, extra geometry, random artifacts"""
+
+# "over-exposure, under-exposure, saturated, duplicate, out of frame, lowres, cropped, worst quality, low quality, jpeg artifacts, morbid, mutilated, out of frame, ugly, bad anatomy, bad proportions, deformed, blurry, duplicate"
 
 apply_canny = CannyDetector()
 
@@ -394,9 +399,11 @@ def parse_args():
     parser.add_argument(
         "--negative_prompt",
         type=str,
-        default="over-exposure, under-exposure, saturated, duplicate, out of frame, lowres, cropped, worst quality, low quality, jpeg artifacts, morbid, mutilated, out of frame, ugly, bad anatomy, bad proportions, deformed, blurry, duplicate",
+        default=DEFAULT_NEGATIVE_PROMPT,
         help="Negative prompt used for unconditional guidance",
     )
+    
+    
     parser.add_argument("--canny_low_threshold", type=int, default=100)
     parser.add_argument("--canny_high_threshold", type=int, default=200)
     parser.add_argument("--control_resolution", type=int, default=384)
